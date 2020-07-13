@@ -9,7 +9,7 @@ require (
 	github.com/wealdtech/go-ecodec v1.1.0
 	github.com/wealdtech/go-eth2-types/v2 v2.5.0
 	github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4 v1.0.0
-	github.com/wealdtech/go-eth2-wallet-store-filesystem v1.16.0
+	github.com/wealdtech/go-eth2-wallet-store-filesystem v1.16.1
 	github.com/wealdtech/go-eth2-wallet-store-scratch v1.5.0
 	github.com/wealdtech/go-eth2-wallet-types/v2 v2.5.0
 	github.com/wealdtech/go-indexer v1.0.0
