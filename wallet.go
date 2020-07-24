@@ -278,7 +278,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context, name string, priv
 	for k, v := range participants {
 		a.participants[k] = v
 	}
-	a.crypto, err = w.encryptor.Encrypt(privateKey.Marshal(), passphrase)
+	a.crypto, err = w.encryptor.Encrypt(privateKey.Marshal(), string(passphrase))
 	if err != nil {
 		return nil, err
 	}

@@ -281,7 +281,7 @@ func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	secretBytes, err := a.encryptor.Decrypt(a.crypto, passphrase)
+	secretBytes, err := a.encryptor.Decrypt(a.crypto, string(passphrase))
 	if err != nil {
 		return errors.New("incorrect passphrase")
 	}
