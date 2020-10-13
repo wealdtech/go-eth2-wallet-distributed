@@ -255,7 +255,7 @@ func TestUnlock(t *testing.T) {
 				verified := signature.Verify([]byte("test"), privKey.PublicKey())
 				assert.Equal(t, true, verified)
 
-				account.Lock(context.Background())
+				require.NoError(t, account.Lock(context.Background()))
 
 				// Try to sign something - should fail because locked (again)
 				ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)

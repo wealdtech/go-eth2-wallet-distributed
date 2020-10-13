@@ -175,7 +175,11 @@ func TestImportAccount(t *testing.T) {
 
 	err = wallet.(e2wtypes.WalletLocker).Unlock(context.Background(), nil)
 	require.Nil(t, err)
-	defer wallet.(e2wtypes.WalletLocker).Lock(context.Background())
+	defer func() {
+		if err := wallet.(e2wtypes.WalletLocker).Lock(context.Background()); err != nil {
+			panic(err)
+		}
+	}()
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			account, err := wallet.(e2wtypes.WalletDistributedAccountImporter).ImportDistributedAccount(context.Background(), test.accountName, test.key, test.signingThreshold, test.verificationVector, test.participants, test.passphrase)
@@ -215,6 +219,7 @@ func TestRebuildIndex(t *testing.T) {
 	passphrase := []byte("test passphrase")
 
 	rand.Seed(time.Now().Unix())
+	// #nosec G404
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("TestRebuildIndex-%d", rand.Int31()))
 	defer os.RemoveAll(path)
 	store := filesystem.New(filesystem.WithLocation(path))
@@ -225,7 +230,11 @@ func TestRebuildIndex(t *testing.T) {
 
 	err = wallet.(e2wtypes.WalletLocker).Unlock(context.Background(), nil)
 	require.Nil(t, err)
-	defer wallet.(e2wtypes.WalletLocker).Lock(context.Background())
+	defer func() {
+		if err := wallet.(e2wtypes.WalletLocker).Lock(context.Background()); err != nil {
+			panic(err)
+		}
+	}()
 
 	_, err = wallet.(e2wtypes.WalletDistributedAccountImporter).ImportDistributedAccount(context.Background(), accountName, key, signingThreshold, verificationVector, participants, passphrase)
 	require.NoError(t, err)
