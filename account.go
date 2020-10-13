@@ -253,11 +253,7 @@ func (a *account) Participants() map[uint64]string {
 
 // PrivateKey provides the private key for the account.
 func (a *account) PrivateKey(ctx context.Context) (e2types.PrivateKey, error) {
-	unlocked, err := a.IsUnlocked(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !unlocked {
+	if a.secretKey == nil {
 		return nil, errors.New("cannot provide private key when account is locked")
 	}
 	return e2types.BLSPrivateKeyFromBytes(a.secretKey.Marshal())
@@ -280,6 +276,10 @@ func (a *account) Lock(ctx context.Context) error {
 func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
+
+	if a.secretKey != nil {
+		return nil
+	}
 
 	secretBytes, err := a.encryptor.Decrypt(a.crypto, string(passphrase))
 	if err != nil {
@@ -311,12 +311,8 @@ func (a *account) Path() string {
 func (a *account) Sign(ctx context.Context, data []byte) (e2types.Signature, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
-	unlocked, err := a.IsUnlocked(ctx)
-	if err != nil {
-		return nil, err
-	}
 
-	if !unlocked {
+	if a.secretKey == nil {
 		return nil, errors.New("cannot sign when account is locked")
 	}
 	return a.secretKey.Sign(data), nil
