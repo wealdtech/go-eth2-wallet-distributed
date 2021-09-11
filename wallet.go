@@ -210,11 +210,7 @@ func (w *wallet) storeWallet() error {
 		return err
 	}
 
-	if err := w.store.StoreWallet(w.ID(), w.Name(), data); err != nil {
-		return err
-	}
-
-	return nil
+	return w.store.StoreWallet(w.ID(), w.Name(), data)
 }
 
 // ImportDistributedAccount creates a new distributed account in the wallet from provided data.
@@ -440,8 +436,5 @@ func (w *wallet) storeAccountsIndex() error {
 	if err != nil {
 		return err
 	}
-	if err := w.store.StoreAccountsIndex(w.id, serializedIndex); err != nil {
-		return err
-	}
-	return nil
+	return w.store.StoreAccountsIndex(w.id, serializedIndex)
 }
