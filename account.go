@@ -1,4 +1,4 @@
-// Copyright 2020 Weald Technology Trading
+// Copyright 2020, 2021 Weald Technology Trading.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -52,6 +52,8 @@ func newAccount() *account {
 
 // MarshalJSON implements custom JSON marshaller.
 func (a *account) MarshalJSON() ([]byte, error) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	data := make(map[string]interface{})
 	data["uuid"] = a.id.String()
 	data["name"] = a.name
@@ -75,6 +77,8 @@ func (a *account) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements custom JSON unmarshaller.
 func (a *account) UnmarshalJSON(data []byte) error {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	var v map[string]interface{}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
@@ -205,62 +209,67 @@ func (a *account) UnmarshalJSON(data []byte) error {
 
 // ID provides the ID for the account.
 func (a *account) ID() uuid.UUID {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	return a.id
 }
 
 // Name provides the ID for the account.
 func (a *account) Name() string {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	return a.name
 }
 
 // PublicKey provides the public key for the account.
 func (a *account) PublicKey() e2types.PublicKey {
-	// Safe to ignore the error as this is already a public key
-	keyCopy, _ := e2types.BLSPublicKeyFromBytes(a.publicKey.Marshal())
-	return keyCopy
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.publicKey
 }
 
 // CompositePublicKey provides the composite public key for the account.
 func (a *account) CompositePublicKey() e2types.PublicKey {
-	// Safe to ignore the error as this is already a public key and we're just copying.
-	keyCopy, _ := e2types.BLSPublicKeyFromBytes(a.verificationVector[0].Marshal())
-	return keyCopy
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.verificationVector[0]
 }
 
 // SigningThreshold provides the composite threshold for the account.
 func (a *account) SigningThreshold() uint32 {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	return a.signingThreshold
 }
 
 // VerificationVector provides the verification vector for the account.
 func (a *account) VerificationVector() []e2types.PublicKey {
-	verificationVectorCopy := make([]e2types.PublicKey, len(a.verificationVector))
-	for i := range a.verificationVector {
-		// Safe to ignore the error as this is already a public key and we're just copying.
-		verificationVectorCopy[i], _ = e2types.BLSPublicKeyFromBytes(a.verificationVector[i].Marshal())
-	}
-	return verificationVectorCopy
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.verificationVector
 }
 
 // Participants provides the participants in this distributed account.
 func (a *account) Participants() map[uint64]string {
-	participantsCopy := make(map[uint64]string, len(a.participants))
-	for k, v := range a.participants {
-		participantsCopy[k] = v
-	}
-	return participantsCopy
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.participants
 }
 
 // PrivateKey provides the private key for the account.
 func (a *account) PrivateKey(ctx context.Context) (e2types.PrivateKey, error) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	if a.secretKey == nil {
 		return nil, errors.New("cannot provide private key when account is locked")
 	}
-	return e2types.BLSPrivateKeyFromBytes(a.secretKey.Marshal())
+	return a.secretKey, nil
 }
 
 // Wallet provides the wallet for the account.
 func (a *account) Wallet() e2wtypes.Wallet {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	return a.wallet
 }
 
@@ -299,6 +308,8 @@ func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
 
 // IsUnlocked returns true if the account is unlocked.
 func (a *account) IsUnlocked(ctx context.Context) (bool, error) {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
 	return a.secretKey != nil, nil
 }
 

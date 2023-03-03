@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -218,7 +217,6 @@ func TestRebuildIndex(t *testing.T) {
 	participants := map[uint64]string{1: "foo", 2: "bar", 3: "baz"}
 	passphrase := []byte("test passphrase")
 
-	rand.Seed(time.Now().Unix())
 	// #nosec G404
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("TestRebuildIndex-%d", rand.Int31()))
 	defer os.RemoveAll(path)
