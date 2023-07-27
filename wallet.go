@@ -1,4 +1,4 @@
-// Copyright 2020 Weald Technology Trading
+// Copyright 2020, 2023 Weald Technology Trading
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -40,32 +39,38 @@ type wallet struct {
 	version   uint
 	store     e2wtypes.Store
 	encryptor e2wtypes.Encryptor
-	mutex     *sync.RWMutex
 	unlocked  bool
 	index     *indexer.Index
 }
 
-// newWallet creates a new wallet
-func newWallet() *wallet {
-	return &wallet{
-		mutex: new(sync.RWMutex),
-		index: indexer.New(),
+// newWallet creates a new wallet.
+func newWallet() (*wallet, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to generate ID")
 	}
+
+	return &wallet{
+		id:      id,
+		version: version,
+		index:   indexer.New(),
+	}, nil
 }
 
 // MarshalJSON implements custom JSON marshaller.
 func (w *wallet) MarshalJSON() ([]byte, error) {
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	data["uuid"] = w.id.String()
 	data["name"] = w.name
 	data["version"] = w.version
 	data["type"] = walletType
+
 	return json.Marshal(data)
 }
 
 // UnmarshalJSON implements custom JSON unmarshaller.
 func (w *wallet) UnmarshalJSON(data []byte) error {
-	var v map[string]interface{}
+	var v map[string]any
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -117,19 +122,16 @@ func (w *wallet) UnmarshalJSON(data []byte) error {
 
 // CreateWallet creates a new wallet with the given name and stores it in the provided store.
 // This will error if the wallet already exists.
-func CreateWallet(ctx context.Context, name string, store e2wtypes.Store, encryptor e2wtypes.Encryptor) (e2wtypes.Wallet, error) {
+func CreateWallet(_ context.Context, name string, store e2wtypes.Store, encryptor e2wtypes.Encryptor) (e2wtypes.Wallet, error) {
 	// First, try to access the wallet to ensure there's nothing there.
 	if _, err := store.RetrieveWallet(name); err == nil {
 		return nil, fmt.Errorf("wallet %q already exists", name)
 	}
 
-	id, err := uuid.NewRandom()
+	w, err := newWallet()
 	if err != nil {
 		return nil, err
 	}
-
-	w := newWallet()
-	w.id = id
 	w.name = name
 	w.version = version
 	w.store = store
@@ -144,12 +146,20 @@ func OpenWallet(ctx context.Context, name string, store e2wtypes.Store, encrypto
 	if err != nil {
 		return nil, errors.Wrapf(err, "wallet %q does not exist", name)
 	}
+
 	return DeserializeWallet(ctx, data, store, encryptor)
 }
 
-// DeserializeWallet deserializes a wallet from its byte-level representation
-func DeserializeWallet(ctx context.Context, data []byte, store e2wtypes.Store, encryptor e2wtypes.Encryptor) (e2wtypes.Wallet, error) {
-	wallet := newWallet()
+// DeserializeWallet deserializes a wallet from its byte-level representation.
+func DeserializeWallet(ctx context.Context,
+	data []byte,
+	store e2wtypes.Store,
+	encryptor e2wtypes.Encryptor,
+) (
+	e2wtypes.Wallet,
+	error,
+) {
+	wallet := &wallet{}
 	if err := json.Unmarshal(data, wallet); err != nil {
 		return nil, errors.Wrap(err, "wallet corrupt")
 	}
@@ -183,19 +193,19 @@ func (w *wallet) Version() uint {
 }
 
 // Lock locks the wallet.  A locked wallet cannot create new accounts.
-func (w *wallet) Lock(ctx context.Context) error {
+func (w *wallet) Lock(_ context.Context) error {
 	w.unlocked = false
 	return nil
 }
 
 // Unlock unlocks the wallet.  An unlocked wallet can create new accounts.
-func (w *wallet) Unlock(ctx context.Context, passphrase []byte) error {
+func (w *wallet) Unlock(_ context.Context, _ []byte) error {
 	w.unlocked = true
 	return nil
 }
 
 // IsUnlocked reports if the wallet is unlocked.
-func (w *wallet) IsUnlocked(ctx context.Context) (bool, error) {
+func (w *wallet) IsUnlocked(_ context.Context) (bool, error) {
 	return w.unlocked, nil
 }
 
@@ -216,7 +226,17 @@ func (w *wallet) storeWallet() error {
 // ImportDistributedAccount creates a new distributed account in the wallet from provided data.
 // The only rule for names is that they cannot start with an underscore (_) character.
 // This will error if an account with the name already exists.
-func (w *wallet) ImportDistributedAccount(ctx context.Context, name string, privatekey []byte, signingThreshold uint32, verificationVector [][]byte, participants map[uint64]string, passphrase []byte) (e2wtypes.Account, error) {
+func (w *wallet) ImportDistributedAccount(ctx context.Context,
+	name string,
+	privatekey []byte,
+	signingThreshold uint32,
+	verificationVector [][]byte,
+	participants map[uint64]string,
+	passphrase []byte,
+) (
+	e2wtypes.Account,
+	error,
+) {
 	if name == "" {
 		return nil, errors.New("account name missing")
 	}
@@ -246,13 +266,13 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context, name string, priv
 		return nil, errors.New("wallet must be unlocked to create accounts")
 	}
 
-	// Ensure that we don't already have an account with this name
+	// Ensure that we don't already have an account with this name.
 	if _, err := w.AccountByName(ctx, name); err == nil {
 		return nil, fmt.Errorf("account with name %q already exists", name)
 	}
 
-	a := newAccount()
-	if a.id, err = uuid.NewRandom(); err != nil {
+	a, err := newAccount()
+	if err != nil {
 		return nil, err
 	}
 	a.name = name
@@ -261,7 +281,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context, name string, priv
 		return nil, err
 	}
 	a.publicKey = privateKey.PublicKey()
-	// Encrypt the private key
+	// Encrypt the private key.
 	a.signingThreshold = signingThreshold
 	a.verificationVector = make([]e2types.PublicKey, len(verificationVector))
 	for i := range verificationVector {
@@ -292,7 +312,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context, name string, priv
 }
 
 // Accounts provides all accounts in the wallet.
-func (w *wallet) Accounts(ctx context.Context) <-chan e2wtypes.Account {
+func (w *wallet) Accounts(_ context.Context) <-chan e2wtypes.Account {
 	ch := make(chan e2wtypes.Account, 1024)
 	go func() {
 		for data := range w.store.RetrieveAccounts(w.ID()) {
@@ -302,6 +322,7 @@ func (w *wallet) Accounts(ctx context.Context) <-chan e2wtypes.Account {
 		}
 		close(ch)
 	}()
+
 	return ch
 }
 
@@ -314,6 +335,7 @@ func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) 
 
 	accounts := make([]*account, 0)
 	for acc := range w.Accounts(ctx) {
+		//nolint:forcetypeassert
 		accounts = append(accounts, acc.(*account))
 	}
 
@@ -331,7 +353,15 @@ func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) 
 }
 
 // Import imports the entire wallet, protected by an additional passphrase.
-func Import(ctx context.Context, encryptedData []byte, passphrase []byte, store e2wtypes.Store, encryptor e2wtypes.Encryptor) (e2wtypes.Wallet, error) {
+func Import(ctx context.Context,
+	encryptedData []byte,
+	passphrase []byte,
+	store e2wtypes.Store,
+	encryptor e2wtypes.Encryptor,
+) (
+	e2wtypes.Wallet,
+	error,
+) {
 	type walletExt struct {
 		Wallet   *wallet    `json:"wallet"`
 		Accounts []*account `json:"accounts"`
@@ -342,27 +372,31 @@ func Import(ctx context.Context, encryptedData []byte, passphrase []byte, store 
 		return nil, err
 	}
 
-	ext := &walletExt{}
+	wallet, err := newWallet()
+	if err != nil {
+		return nil, err
+	}
+	ext := &walletExt{
+		Wallet: wallet,
+	}
 	if err := json.Unmarshal(data, ext); err != nil {
 		return nil, err
 	}
 
-	ext.Wallet.mutex = new(sync.RWMutex)
-	ext.Wallet.index = indexer.New()
 	ext.Wallet.store = store
 	ext.Wallet.encryptor = encryptor
 
-	// See if the wallet already exists
+	// See if the wallet already exists.
 	if _, err := OpenWallet(ctx, ext.Wallet.Name(), store, encryptor); err == nil {
 		return nil, fmt.Errorf("wallet %q already exists", ext.Wallet.Name())
 	}
 
-	// Create the wallet
+	// Create the wallet.
 	if err := ext.Wallet.storeWallet(); err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("failed to store wallet %q", ext.Wallet.Name()))
 	}
 
-	// Create the accounts
+	// Create the accounts.
 	for _, acc := range ext.Accounts {
 		acc.wallet = ext.Wallet
 		acc.encryptor = encryptor
@@ -382,16 +416,18 @@ func (w *wallet) AccountByName(ctx context.Context, name string) (e2wtypes.Accou
 	if !exists {
 		return nil, fmt.Errorf("no account with name %q", name)
 	}
+
 	return w.AccountByID(ctx, id)
 }
 
 // AccountByID provides a single account from the wallet given its ID.
 // This will error if the account is not found.
-func (w *wallet) AccountByID(ctx context.Context, id uuid.UUID) (e2wtypes.Account, error) {
+func (w *wallet) AccountByID(_ context.Context, id uuid.UUID) (e2wtypes.Account, error) {
 	data, err := w.store.RetrieveAccount(w.id, id)
 	if err != nil {
 		return nil, err
 	}
+
 	return deserializeAccount(w, data)
 }
 
@@ -427,6 +463,7 @@ func (w *wallet) retrieveAccountsIndex(ctx context.Context) error {
 		}
 		w.index = index
 	}
+
 	return nil
 }
 
@@ -436,5 +473,6 @@ func (w *wallet) storeAccountsIndex() error {
 	if err != nil {
 		return err
 	}
+
 	return w.store.StoreAccountsIndex(w.id, serializedIndex)
 }

@@ -183,8 +183,9 @@ func TestUnmarshalAccount(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			output := newAccount()
-			err := json.Unmarshal(test.input, output)
+			output, err := newAccount()
+			require.NoError(t, err)
+			err = json.Unmarshal(test.input, output)
 			if test.err != "" {
 				require.Error(t, err)
 				assert.EqualError(t, err, test.err)
@@ -225,9 +226,9 @@ func TestUnlock(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			account := newAccount()
-			err := json.Unmarshal(test.account, account)
-			require.Nil(t, err)
+			account, err := newAccount()
+			require.NoError(t, err)
+			require.NoError(t, json.Unmarshal(test.account, account))
 
 			// Try to sign something - should fail because locked
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

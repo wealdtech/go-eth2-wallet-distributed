@@ -36,25 +36,32 @@ type account struct {
 	verificationVector []e2types.PublicKey
 	signingThreshold   uint32
 	participants       map[uint64]string
-	crypto             map[string]interface{}
+	crypto             map[string]any
 	secretKey          e2types.PrivateKey
 	publicKey          e2types.PublicKey
 	version            uint
-	wallet             e2wtypes.Wallet
+	wallet             *wallet
 	encryptor          e2wtypes.Encryptor
 	mutex              sync.RWMutex
 }
 
-// newAccount creates a new account
-func newAccount() *account {
-	return &account{}
+// newAccount creates a new account.
+func newAccount() (*account, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to generate ID")
+	}
+
+	return &account{
+		id: id,
+	}, nil
 }
 
 // MarshalJSON implements custom JSON marshaller.
 func (a *account) MarshalJSON() ([]byte, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	data["uuid"] = a.id.String()
 	data["name"] = a.name
 	data["pubkey"] = fmt.Sprintf("%x", a.publicKey.Marshal())
@@ -72,14 +79,15 @@ func (a *account) MarshalJSON() ([]byte, error) {
 	data["crypto"] = a.crypto
 	data["encryptor"] = a.encryptor.Name()
 	data["version"] = a.version
+
 	return json.Marshal(data)
 }
 
 // UnmarshalJSON implements custom JSON unmarshaller.
 func (a *account) UnmarshalJSON(data []byte) error {
-	a.mutex.RLock()
-	defer a.mutex.RUnlock()
-	var v map[string]interface{}
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	var v map[string]any
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -122,7 +130,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 		return errors.New("account pubkey missing")
 	}
 	if val, exists := v["verificationvector"]; exists {
-		verificationVectorData, ok := val.([]interface{})
+		verificationVectorData, ok := val.([]any)
 		if !ok {
 			return errors.New("account verificationvector invalid")
 		}
@@ -147,7 +155,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 		return errors.New("account verificationvector missing")
 	}
 	if val, exists := v["participants"]; exists {
-		participantData, ok := val.(map[string]interface{})
+		participantData, ok := val.(map[string]any)
 		if !ok {
 			return errors.New("account participants invalid")
 		}
@@ -180,7 +188,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 		return errors.New("account signing threshold missing")
 	}
 	if val, exists := v["crypto"]; exists {
-		crypto, ok := val.(map[string]interface{})
+		crypto, ok := val.(map[string]any)
 		if !ok {
 			return errors.New("account crypto invalid")
 		}
@@ -211,6 +219,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 func (a *account) ID() uuid.UUID {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.id
 }
 
@@ -218,6 +227,7 @@ func (a *account) ID() uuid.UUID {
 func (a *account) Name() string {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.name
 }
 
@@ -225,6 +235,7 @@ func (a *account) Name() string {
 func (a *account) PublicKey() e2types.PublicKey {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.publicKey
 }
 
@@ -232,6 +243,7 @@ func (a *account) PublicKey() e2types.PublicKey {
 func (a *account) CompositePublicKey() e2types.PublicKey {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.verificationVector[0]
 }
 
@@ -239,6 +251,7 @@ func (a *account) CompositePublicKey() e2types.PublicKey {
 func (a *account) SigningThreshold() uint32 {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.signingThreshold
 }
 
@@ -246,6 +259,7 @@ func (a *account) SigningThreshold() uint32 {
 func (a *account) VerificationVector() []e2types.PublicKey {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.verificationVector
 }
 
@@ -253,16 +267,18 @@ func (a *account) VerificationVector() []e2types.PublicKey {
 func (a *account) Participants() map[uint64]string {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.participants
 }
 
 // PrivateKey provides the private key for the account.
-func (a *account) PrivateKey(ctx context.Context) (e2types.PrivateKey, error) {
+func (a *account) PrivateKey(_ context.Context) (e2types.PrivateKey, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 	if a.secretKey == nil {
 		return nil, errors.New("cannot provide private key when account is locked")
 	}
+
 	return a.secretKey, nil
 }
 
@@ -270,19 +286,21 @@ func (a *account) PrivateKey(ctx context.Context) (e2types.PrivateKey, error) {
 func (a *account) Wallet() e2wtypes.Wallet {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.wallet
 }
 
 // Lock locks the account.  A locked account cannot sign data.
-func (a *account) Lock(ctx context.Context) error {
+func (a *account) Lock(_ context.Context) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	a.secretKey = nil
+
 	return nil
 }
 
 // Unlock unlocks the account.  An unlocked account can sign data.
-func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
+func (a *account) Unlock(_ context.Context, passphrase []byte) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -303,13 +321,15 @@ func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
 		return errors.New("secret key does not correspond to public key")
 	}
 	a.secretKey = secretKey
+
 	return nil
 }
 
 // IsUnlocked returns true if the account is unlocked.
-func (a *account) IsUnlocked(ctx context.Context) (bool, error) {
+func (a *account) IsUnlocked(_ context.Context) (bool, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+
 	return a.secretKey != nil, nil
 }
 
@@ -319,36 +339,36 @@ func (a *account) Path() string {
 }
 
 // Sign signs data.
-func (a *account) Sign(ctx context.Context, data []byte) (e2types.Signature, error) {
+func (a *account) Sign(_ context.Context, data []byte) (e2types.Signature, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 
 	if a.secretKey == nil {
 		return nil, errors.New("cannot sign when account is locked")
 	}
+
 	return a.secretKey.Sign(data), nil
 }
 
 // storeAccount stores the account.
 func (a *account) storeAccount(ctx context.Context) error {
-	a.mutex.RLock()
-	defer a.mutex.RUnlock()
 	data, err := json.Marshal(a)
 	if err != nil {
 		return errors.Wrap(err, "failed to create store format")
 	}
-	if err := a.wallet.(*wallet).storeAccountsIndex(); err != nil {
+
+	if err := a.wallet.storeAccountsIndex(); err != nil {
 		return errors.Wrap(err, "failed to store account index")
 	}
-	if err := a.wallet.(*wallet).store.StoreAccount(a.wallet.ID(), a.ID(), data); err != nil {
+	if err := a.wallet.store.StoreAccount(a.wallet.ID(), a.ID(), data); err != nil {
 		return errors.Wrap(err, "failed to store account")
 	}
 
 	// Check to ensure the account can be retrieved.
-	if _, err = a.wallet.(e2wtypes.WalletAccountByNameProvider).AccountByName(ctx, a.name); err != nil {
+	if _, err = a.wallet.AccountByName(ctx, a.name); err != nil {
 		return errors.Wrap(err, "failed to confirm account when retrieving by name")
 	}
-	if _, err = a.wallet.(e2wtypes.WalletAccountByIDProvider).AccountByID(ctx, a.id); err != nil {
+	if _, err = a.wallet.AccountByID(ctx, a.id); err != nil {
 		return errors.Wrap(err, "failed to confirm account when retrieveing by ID")
 	}
 
@@ -357,11 +377,15 @@ func (a *account) storeAccount(ctx context.Context) error {
 
 // deserializeAccount deserializes account data to an account.
 func deserializeAccount(w *wallet, data []byte) (e2wtypes.Account, error) {
-	a := newAccount()
+	a, err := newAccount()
+	if err != nil {
+		return nil, err
+	}
 	a.wallet = w
 	a.encryptor = w.encryptor
 	if err := json.Unmarshal(data, a); err != nil {
 		return nil, err
 	}
+
 	return a, nil
 }
