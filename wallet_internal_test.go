@@ -59,7 +59,7 @@ func TestUnmarshalWallet(t *testing.T) {
 		{
 			name:  "BadID",
 			input: []byte(`{"uuid":"bad","name":"Bad","type":"distributed","version":1}`),
-			err:   errors.New("invalid UUID length: 3"),
+			err:   errors.New("failed to parse UUID: invalid UUID length: 3"),
 		},
 		{
 			name:  "MissingName",

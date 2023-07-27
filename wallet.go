@@ -65,14 +65,19 @@ func (w *wallet) MarshalJSON() ([]byte, error) {
 	data["version"] = w.version
 	data["type"] = walletType
 
-	return json.Marshal(data)
+	res, err := json.Marshal(data)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal wallet")
+	}
+
+	return res, nil
 }
 
 // UnmarshalJSON implements custom JSON unmarshaller.
 func (w *wallet) UnmarshalJSON(data []byte) error {
 	var v map[string]any
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return errors.Wrap(err, "failed to unmarshal wallet")
 	}
 	if val, exists := v["type"]; exists {
 		dataWalletType, ok := val.(string)
@@ -92,7 +97,7 @@ func (w *wallet) UnmarshalJSON(data []byte) error {
 		}
 		id, err := uuid.Parse(idStr)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to parse UUID")
 		}
 		w.id = id
 	} else {
@@ -213,14 +218,18 @@ func (w *wallet) IsUnlocked(_ context.Context) (bool, error) {
 func (w *wallet) storeWallet() error {
 	data, err := json.Marshal(w)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create store format")
 	}
 
 	if err := w.storeAccountsIndex(); err != nil {
-		return err
+		return errors.Wrap(err, "failed to store account index")
 	}
 
-	return w.store.StoreWallet(w.ID(), w.Name(), data)
+	if err := w.store.StoreWallet(w.ID(), w.Name(), data); err != nil {
+		return errors.Wrap(err, "failed to store wallet")
+	}
+
+	return nil
 }
 
 // ImportDistributedAccount creates a new distributed account in the wallet from provided data.
@@ -278,7 +287,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context,
 	a.name = name
 	privateKey, err := e2types.BLSPrivateKeyFromBytes(privatekey)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to obtain BLS private key")
 	}
 	a.publicKey = privateKey.PublicKey()
 	// Encrypt the private key.
@@ -287,7 +296,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context,
 	for i := range verificationVector {
 		a.verificationVector[i], err = e2types.BLSPublicKeyFromBytes(verificationVector[i])
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to obtain BLS public key for verification vector %d", i)
 		}
 	}
 	a.participants = make(map[uint64]string, len(participants))
@@ -296,7 +305,7 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context,
 	}
 	a.crypto, err = w.encryptor.Encrypt(privateKey.Marshal(), string(passphrase))
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to encrypt private key")
 	}
 	a.encryptor = w.encryptor
 	a.version = w.encryptor.Version()
@@ -346,10 +355,15 @@ func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) 
 
 	data, err := json.Marshal(ext)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to marshal JSON for export")
 	}
 
-	return ecodec.Encrypt(data, passphrase)
+	res, err := ecodec.Encrypt(data, passphrase)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encrypt export")
+	}
+
+	return res, nil
 }
 
 // Import imports the entire wallet, protected by an additional passphrase.
@@ -369,7 +383,7 @@ func Import(ctx context.Context,
 
 	data, err := ecodec.Decrypt(encryptedData, passphrase)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to decrypt wallet")
 	}
 
 	wallet, err := newWallet()
@@ -380,7 +394,7 @@ func Import(ctx context.Context,
 		Wallet: wallet,
 	}
 	if err := json.Unmarshal(data, ext); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to unmarshal JSON")
 	}
 
 	ext.Wallet.store = store
@@ -425,7 +439,7 @@ func (w *wallet) AccountByName(ctx context.Context, name string) (e2wtypes.Accou
 func (w *wallet) AccountByID(_ context.Context, id uuid.UUID) (e2wtypes.Account, error) {
 	data, err := w.store.RetrieveAccount(w.id, id)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to retrieve account")
 	}
 
 	return deserializeAccount(w, data)
@@ -459,7 +473,7 @@ func (w *wallet) retrieveAccountsIndex(ctx context.Context) error {
 	} else {
 		index, err := indexer.Deserialize(serializedIndex)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to deserialize index")
 		}
 		w.index = index
 	}
@@ -471,8 +485,12 @@ func (w *wallet) retrieveAccountsIndex(ctx context.Context) error {
 func (w *wallet) storeAccountsIndex() error {
 	serializedIndex, err := w.index.Serialize()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to serialize index")
 	}
 
-	return w.store.StoreAccountsIndex(w.id, serializedIndex)
+	if err := w.store.StoreAccountsIndex(w.id, serializedIndex); err != nil {
+		return errors.Wrap(err, "failed to store accounts index")
+	}
+
+	return nil
 }

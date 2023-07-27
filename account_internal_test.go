@@ -75,7 +75,7 @@ func TestUnmarshalAccount(t *testing.T) {
 		{
 			name:  "BadID",
 			input: []byte(`{"crypto":{"checksum":{"function":"sha256","message":"5b2b545965b45bca2ea3cc47d3ec948e7b2270117f480886804fb8f38659538c","params":{}},"cipher":{"function":"aes-128-ctr","message":"e102b4647c602d58ceecd16c58b5001fb9cfae987664081cc47d73d22e2e12f4","params":{"iv":"a268c48c48bd568f1b03153b45669f31"}},"kdf":{"function":"pbkdf2","message":"","params":{"c":16,"dklen":32,"prf":"hmac-sha256","salt":"344d372d72bdabecd89d30d3cb14d5355b2801b2aa75b08dfeb0711f60f91c07"}}},"encryptor":"keystore","name":"Test account","participants":{"1":"signer-l01.attestant.io:8881","2":"signer-l02.attestant.io:8882","3":"signer-l03.attestant.io:8883"},"pubkey":"a304edb3fd6517ac7b58b9fdba472315adc1fcf9a519a081d0d855e0d65c0e23ea01f801951afa933507f98fc2a900d4","signing_threshold":2,"uuid":"foo","verificationvector":["b71f3dc08d96fa8b6afacc3d4c9942ec8c8eab6a2b4ee6e885ec34629e672a0f8b7741226df2071ff39afb8b9a08054e","a3a586504cfd4ccca23d0e4b4d198a59f54b5eb1a65e0c7ff2d14f1e8e6667aa45ac0eceb58b805a13e39ab76a2e601e"],"version":4}`),
-			err:   "invalid UUID length: 3",
+			err:   "failed to parse UUID: invalid UUID length: 3",
 		},
 		{
 			name:  "MissingName",
@@ -165,12 +165,12 @@ func TestUnmarshalAccount(t *testing.T) {
 		{
 			name:  "BadVerificationVector3",
 			input: []byte(`{"crypto":{"checksum":{"function":"sha256","message":"5b2b545965b45bca2ea3cc47d3ec948e7b2270117f480886804fb8f38659538c","params":{}},"cipher":{"function":"aes-128-ctr","message":"e102b4647c602d58ceecd16c58b5001fb9cfae987664081cc47d73d22e2e12f4","params":{"iv":"a268c48c48bd568f1b03153b45669f31"}},"kdf":{"function":"pbkdf2","message":"","params":{"c":16,"dklen":32,"prf":"hmac-sha256","salt":"344d372d72bdabecd89d30d3cb14d5355b2801b2aa75b08dfeb0711f60f91c07"}}},"encryptor":"keystore","name":"Test account","participants":{"1":"signer-l01.attestant.io:8881","2":"signer-l02.attestant.io:8882","3":"signer-l03.attestant.io:8883"},"pubkey":"a304edb3fd6517ac7b58b9fdba472315adc1fcf9a519a081d0d855e0d65c0e23ea01f801951afa933507f98fc2a900d4","signing_threshold":2,"uuid":"0ea52ae0-b04a-4582-adc7-149b0a83c030","verificationvector":["000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","a3a586504cfd4ccca23d0e4b4d198a59f54b5eb1a65e0c7ff2d14f1e8e6667aa45ac0eceb58b805a13e39ab76a2e601e"],"version":4}`),
-			err:   "failed to deserialize public key: err blsPublicKeyDeserialize 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			err:   "failed to obtain BLS public key for verification fector element 0: failed to deserialize public key: err blsPublicKeyDeserialize 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 		},
 		{
 			name:  "WrongVerificationVector",
 			input: []byte(`{"crypto":{"checksum":{"function":"sha256","message":"5b2b545965b45bca2ea3cc47d3ec948e7b2270117f480886804fb8f38659538c","params":{}},"cipher":{"function":"aes-128-ctr","message":"e102b4647c602d58ceecd16c58b5001fb9cfae987664081cc47d73d22e2e12f4","params":{"iv":"a268c48c48bd568f1b03153b45669f31"}},"kdf":{"function":"pbkdf2","message":"","params":{"c":16,"dklen":32,"prf":"hmac-sha256","salt":"344d372d72bdabecd89d30d3cb14d5355b2801b2aa75b08dfeb0711f60f91c07"}}},"encryptor":"keystore","name":"Test account","participants":{"1":"signer-l01.attestant.io:8881","2":"signer-l02.attestant.io:8882","3":"signer-l03.attestant.io:8883"},"pubkey":"a304edb3fd6517ac7b58b9fdba472315adc1fcf9a519a081d0d855e0d65c0e23ea01f801951afa933507f98fc2a900d4","signing_threshold":2,"uuid":"0ea52ae0-b04a-4582-adc7-149b0a83c030","verificationvector":["w71f3dc08d96fa8b6afacc3d4c9942ec8c8eab6a2b4ee6e885ec34629e672a0f8b7741226df2071ff39afb8b9a08054e","a3a586504cfd4ccca23d0e4b4d198a59f54b5eb1a65e0c7ff2d14f1e8e6667aa45ac0eceb58b805a13e39ab76a2e601e"],"version":4}`),
-			err:   "encoding/hex: invalid byte: U+0077 'w'",
+			err:   "failed to decode verification vector element 0: encoding/hex: invalid byte: U+0077 'w'",
 		},
 		{
 			name:      "Good",

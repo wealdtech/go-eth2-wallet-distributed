@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -80,7 +81,12 @@ func (a *account) MarshalJSON() ([]byte, error) {
 	data["encryptor"] = a.encryptor.Name()
 	data["version"] = a.version
 
-	return json.Marshal(data)
+	res, err := json.Marshal(data)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal account")
+	}
+
+	return res, nil
 }
 
 // UnmarshalJSON implements custom JSON unmarshaller.
@@ -89,7 +95,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 	defer a.mutex.Unlock()
 	var v map[string]any
 	if err := json.Unmarshal(data, &v); err != nil {
-		return err
+		return errors.Wrap(err, "failed to unmarshal account")
 	}
 	if val, exists := v["uuid"]; exists {
 		idStr, ok := val.(string)
@@ -98,7 +104,7 @@ func (a *account) UnmarshalJSON(data []byte) error {
 		}
 		id, err := uuid.Parse(idStr)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to parse UUID")
 		}
 		a.id = id
 	} else {
@@ -118,13 +124,13 @@ func (a *account) UnmarshalJSON(data []byte) error {
 		if !ok {
 			return errors.New("account pubkey invalid")
 		}
-		bytes, err := hex.DecodeString(publicKey)
+		bytes, err := hex.DecodeString(strings.TrimPrefix(publicKey, "0x"))
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to decode public key")
 		}
 		a.publicKey, err = e2types.BLSPublicKeyFromBytes(bytes)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "failed to obtain BLS public key")
 		}
 	} else {
 		return errors.New("account pubkey missing")
@@ -140,13 +146,13 @@ func (a *account) UnmarshalJSON(data []byte) error {
 			if !ok {
 				return errors.New("account verification vector does not contain strings")
 			}
-			bytes, err := hex.DecodeString(key)
+			bytes, err := hex.DecodeString(strings.TrimPrefix(key, "0x"))
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "failed to decode verification vector element %d", i)
 			}
 			tmp, err := e2types.BLSPublicKeyFromBytes(bytes)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "failed to obtain BLS public key for verification fector element %d", i)
 			}
 			verificationVector[i] = tmp
 		}
@@ -314,7 +320,7 @@ func (a *account) Unlock(_ context.Context, passphrase []byte) error {
 	}
 	secretKey, err := e2types.BLSPrivateKeyFromBytes(secretBytes)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to obtain BLS private key")
 	}
 	publicKey := secretKey.PublicKey()
 	if !bytes.Equal(publicKey.Marshal(), a.publicKey.Marshal()) {
@@ -384,7 +390,7 @@ func deserializeAccount(w *wallet, data []byte) (e2wtypes.Account, error) {
 	a.wallet = w
 	a.encryptor = w.encryptor
 	if err := json.Unmarshal(data, a); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to unmarshal account")
 	}
 
 	return a, nil
