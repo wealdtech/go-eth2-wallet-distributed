@@ -3,7 +3,6 @@
 [![Tag](https://img.shields.io/github/tag/wealdtech/go-eth2-wallet-distributed.svg)](https://github.com/wealdtech/go-eth2-wallet-distributed/releases/)
 [![License](https://img.shields.io/github/license/wealdtech/go-eth2-wallet-distributed.svg)](LICENSE)
 [![GoDoc](https://godoc.org/github.com/wealdtech/go-eth2-wallet-distributed?status.svg)](https://godoc.org/github.com/wealdtech/go-eth2-wallet-distributed)
-[![codecov.io](https://img.shields.io/codecov/c/github/wealdtech/go-eth2-wallet-distributed.svg)](https://codecov.io/github/wealdtech/go-eth2-wallet-distributed)
 [![Go Report Card](https://goreportcard.com/badge/github.com/wealdtech/go-eth2-wallet-distributed)](https://goreportcard.com/report/github.com/wealdtech/go-eth2-wallet-distributed)
 
 Distributed [Ethereum 2 wallet](https://github.com/wealdtech/go-eth2-wallet).
