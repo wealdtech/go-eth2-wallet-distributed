@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -34,13 +35,18 @@ const (
 
 // wallet contains the details of the wallet.
 type wallet struct {
-	id        uuid.UUID
-	name      string
-	version   uint
-	store     e2wtypes.Store
-	encryptor e2wtypes.Encryptor
-	unlocked  bool
-	index     *indexer.Index
+	id             uuid.UUID
+	name           string
+	version        uint
+	store          e2wtypes.Store
+	encryptor      e2wtypes.Encryptor
+	unlocked       bool
+	index          *indexer.Index
+	batch          *batch
+	accounts       map[uuid.UUID]*account
+	mutex          sync.Mutex
+	batchMutex     sync.Mutex
+	batchDecrypted bool
 }
 
 // newWallet creates a new wallet.
@@ -51,9 +57,10 @@ func newWallet() (*wallet, error) {
 	}
 
 	return &wallet{
-		id:      id,
-		version: version,
-		index:   indexer.New(),
+		id:       id,
+		version:  version,
+		index:    indexer.New(),
+		accounts: make(map[uuid.UUID]*account),
 	}, nil
 }
 
@@ -164,7 +171,10 @@ func DeserializeWallet(ctx context.Context,
 	e2wtypes.Wallet,
 	error,
 ) {
-	wallet := &wallet{}
+	wallet, err := newWallet()
+	if err != nil {
+		return nil, err
+	}
 	if err := json.Unmarshal(data, wallet); err != nil {
 		return nil, errors.Wrap(err, "wallet corrupt")
 	}
@@ -311,32 +321,68 @@ func (w *wallet) ImportDistributedAccount(ctx context.Context,
 	a.version = w.encryptor.Version()
 	a.wallet = w
 
+	// Have to update the index first so that storeAccount() stores the
+	// index with the new account present, but be ready to revert if it fails.
+	w.mutex.Lock()
 	w.index.Add(a.id, a.name)
-
 	if err := a.storeAccount(ctx); err != nil {
+		w.index.Remove(a.id, a.name)
+		w.mutex.Unlock()
 		return nil, err
 	}
+	w.accounts[a.id] = a
+	w.mutex.Unlock()
 
 	return a, nil
 }
 
+func (w *wallet) retrieveBatchIfRequired(ctx context.Context) error {
+	var err error
+
+	if w.batch == nil {
+		// Batch not retrieved, try to retrieve it now.
+		if _, isBatchRetriever := w.store.(e2wtypes.BatchRetriever); isBatchRetriever {
+			err = w.retrieveAccountsBatch(ctx)
+		}
+	}
+
+	return err
+}
+
 // Accounts provides all accounts in the wallet.
-func (w *wallet) Accounts(_ context.Context) <-chan e2wtypes.Account {
+func (w *wallet) Accounts(ctx context.Context) <-chan e2wtypes.Account {
 	ch := make(chan e2wtypes.Account, 1024)
-	go func() {
+
+	go func(ch chan e2wtypes.Account) {
+		_ = w.retrieveBatchIfRequired(ctx)
+
+		if w.batch != nil && len(w.batch.entries) > 0 {
+			// Batch present, use pre-loaded accounts.
+			for _, account := range w.accounts {
+				ch <- account
+			}
+			close(ch)
+
+			return
+		}
+
+		// No batch; fall back to individual accounts on the store.
 		for data := range w.store.RetrieveAccounts(w.ID()) {
-			if a, err := deserializeAccount(w, data); err == nil {
-				ch <- a
+			if account, err := deserializeAccount(w, data); err == nil {
+				ch <- account
 			}
 		}
 		close(ch)
-	}()
+	}(ch)
 
 	return ch
 }
 
 // Export exports the entire wallet, protected by an additional passphrase.
 func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
 	type walletExt struct {
 		Wallet   *wallet    `json:"wallet"`
 		Accounts []*account `json:"accounts"`
@@ -355,7 +401,7 @@ func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) 
 
 	data, err := json.Marshal(ext)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal JSON for export")
+		return nil, errors.Wrap(err, "failed to marshal wallet for export")
 	}
 
 	res, err := ecodec.Encrypt(data, passphrase)
@@ -393,21 +439,20 @@ func Import(ctx context.Context,
 	ext := &walletExt{
 		Wallet: wallet,
 	}
-	if err := json.Unmarshal(data, ext); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal JSON")
-	}
-
 	ext.Wallet.store = store
 	ext.Wallet.encryptor = encryptor
+	if err := json.Unmarshal(data, ext); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal wallet")
+	}
 
 	// See if the wallet already exists.
 	if _, err := OpenWallet(ctx, ext.Wallet.Name(), store, encryptor); err == nil {
 		return nil, fmt.Errorf("wallet %q already exists", ext.Wallet.Name())
 	}
 
-	// Create the wallet.
+	// Store the wallet.
 	if err := ext.Wallet.storeWallet(); err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("failed to store wallet %q", ext.Wallet.Name()))
+		return nil, errors.Wrapf(err, "failed to store wallet %q", ext.Wallet.Name())
 	}
 
 	// Create the accounts.
@@ -416,8 +461,12 @@ func Import(ctx context.Context,
 		acc.encryptor = encryptor
 		ext.Wallet.index.Add(acc.id, acc.name)
 		if err := acc.storeAccount(ctx); err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("failed to store account %q", acc.Name()))
+			return nil, errors.Wrapf(err, "failed to store account %q", acc.Name())
 		}
+	}
+
+	if err := ext.Wallet.storeAccountsIndex(); err != nil {
+		return nil, errors.Wrap(err, "failed to store wallet index")
 	}
 
 	return ext.Wallet, nil
@@ -436,13 +485,28 @@ func (w *wallet) AccountByName(ctx context.Context, name string) (e2wtypes.Accou
 
 // AccountByID provides a single account from the wallet given its ID.
 // This will error if the account is not found.
-func (w *wallet) AccountByID(_ context.Context, id uuid.UUID) (e2wtypes.Account, error) {
+func (w *wallet) AccountByID(ctx context.Context, id uuid.UUID) (e2wtypes.Account, error) {
+	_ = w.retrieveBatchIfRequired(ctx)
+
+	if w.batch != nil && len(w.batch.entries) > 0 {
+		// Batch present, use pre-loaded account if available.
+		if account, exists := w.accounts[id]; exists {
+			return account, nil
+		}
+	}
+
+	// No batch or account not in batch; fall back to individual account on the store.
 	data, err := w.store.RetrieveAccount(w.id, id)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to retrieve account")
 	}
+	res, err := deserializeAccount(w, data)
+	if err != nil {
+		return nil, err
+	}
+	w.accounts[id] = res
 
-	return deserializeAccount(w, data)
+	return res, nil
 }
 
 // Store returns the wallet's store.
@@ -457,15 +521,7 @@ func (w *wallet) retrieveAccountsIndex(ctx context.Context) error {
 		// Attempt to recreate the index.
 		w.index = indexer.New()
 		for account := range w.Accounts(ctx) {
-			idProvider, isIDProvider := account.(e2wtypes.AccountIDProvider)
-			if !isIDProvider {
-				return errors.New("Cannot index account without ID")
-			}
-			nameProvider, isNameProvider := account.(e2wtypes.AccountNameProvider)
-			if !isNameProvider {
-				return errors.New("Cannot index account without name")
-			}
-			w.index.Add(idProvider.ID(), nameProvider.Name())
+			w.index.Add(account.ID(), account.Name())
 		}
 		if err := w.storeAccountsIndex(); err != nil {
 			return err

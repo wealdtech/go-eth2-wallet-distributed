@@ -1,4 +1,4 @@
-// Copyright 2020, 2021 Weald Technology Trading.
+// Copyright 2020 - 2023 Weald Technology Trading.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -38,6 +38,7 @@ type account struct {
 	signingThreshold   uint32
 	participants       map[uint64]string
 	crypto             map[string]any
+	unlocked           bool
 	secretKey          e2types.PrivateKey
 	publicKey          e2types.PublicKey
 	version            uint
@@ -281,7 +282,8 @@ func (a *account) Participants() map[uint64]string {
 func (a *account) PrivateKey(_ context.Context) (e2types.PrivateKey, error) {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
-	if a.secretKey == nil {
+
+	if !a.unlocked {
 		return nil, errors.New("cannot provide private key when account is locked")
 	}
 
@@ -300,43 +302,58 @@ func (a *account) Wallet() e2wtypes.Wallet {
 func (a *account) Lock(_ context.Context) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	a.secretKey = nil
+
+	a.unlocked = false
 
 	return nil
 }
 
 // Unlock unlocks the account.  An unlocked account can sign data.
-func (a *account) Unlock(_ context.Context, passphrase []byte) error {
+func (a *account) Unlock(ctx context.Context, passphrase []byte) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	if a.secretKey != nil {
+	if a.unlocked {
+		// The account is already unlocked; nothing to do.
 		return nil
 	}
 
-	secretBytes, err := a.encryptor.Decrypt(a.crypto, string(passphrase))
-	if err != nil {
-		return errors.New("incorrect passphrase")
+	if a.secretKey == nil {
+		// First time unlocking, need to decrypt the secret key.
+		if a.crypto == nil {
+			// This is a batch account, decrypt the batch.
+			if err := a.wallet.batchDecrypt(ctx, passphrase); err != nil {
+				return errors.New("incorrect batch pasphrase")
+			}
+		} else {
+			// This is an individual account, decrypt the account.
+			secretKeyBytes, err := a.encryptor.Decrypt(a.crypto, string(passphrase))
+			if err != nil {
+				return errors.New("incorrect passphrase")
+			}
+			secretKey, err := e2types.BLSPrivateKeyFromBytes(secretKeyBytes)
+			if err != nil {
+				return errors.Wrap(err, "failed to obtain private key")
+			}
+			a.secretKey = secretKey
+		}
+
+		// Ensure the private key is correct.
+		publicKey := a.secretKey.PublicKey()
+		if !bytes.Equal(publicKey.Marshal(), a.publicKey.Marshal()) {
+			a.secretKey = nil
+			return errors.New("private key does not correspond to public key")
+		}
 	}
-	secretKey, err := e2types.BLSPrivateKeyFromBytes(secretBytes)
-	if err != nil {
-		return errors.Wrap(err, "failed to obtain BLS private key")
-	}
-	publicKey := secretKey.PublicKey()
-	if !bytes.Equal(publicKey.Marshal(), a.publicKey.Marshal()) {
-		return errors.New("secret key does not correspond to public key")
-	}
-	a.secretKey = secretKey
+
+	a.unlocked = true
 
 	return nil
 }
 
 // IsUnlocked returns true if the account is unlocked.
 func (a *account) IsUnlocked(_ context.Context) (bool, error) {
-	a.mutex.RLock()
-	defer a.mutex.RUnlock()
-
-	return a.secretKey != nil, nil
+	return a.unlocked, nil
 }
 
 // Path returns "" as non-deterministic accounts are not derived.
@@ -349,7 +366,7 @@ func (a *account) Sign(_ context.Context, data []byte) (e2types.Signature, error
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 
-	if a.secretKey == nil {
+	if !a.unlocked {
 		return nil, errors.New("cannot sign when account is locked")
 	}
 
@@ -382,7 +399,7 @@ func (a *account) storeAccount(ctx context.Context) error {
 }
 
 // deserializeAccount deserializes account data to an account.
-func deserializeAccount(w *wallet, data []byte) (e2wtypes.Account, error) {
+func deserializeAccount(w *wallet, data []byte) (*account, error) {
 	a, err := newAccount()
 	if err != nil {
 		return nil, err

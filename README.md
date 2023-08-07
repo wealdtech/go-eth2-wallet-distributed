@@ -34,6 +34,12 @@ Wallet and account names may be composed of any valid UTF-8 characters; the only
 
 Due to their nature, distributed wallets are not capable of creating accounts by themselves.  Distributed accounts are created by a separate process, and a local part of the distributed wallet can be imported.  Note that although distributed wallets do not have passphrases they still need to be unlocked before accounts can be imported.  This can be carried out with `walllet.Unlock(nil)`
 
+### Batches
+
+This wallet provides the ability to create account batches.  A batch is a single piece of data that contains all accounts in a wallet at a given point in time, all encrypted with the same key.  This significantly decreases the time to obtain and decrypt accounts, however it does make the wallet less dynamic in that changes to accounts in the wallet will not be reflected in the batch automatically.
+
+Batching is a manual process, and must be triggered by the user calling the `BatchWallet()` function.  It is recommended that batching is called once, after all required accounts in a wallet have been created.  It is possible to run subsequent `BatchWallet()` functions if further accounts have been added, however each call will recreate the batch in its entirety rather than incrementally on top of any existing batch, and as such it can take a significant amount of time to complete.  Wallets are unaware of changes in batches, so any `Wallet` would need to be discarded and re-opened after a call to `BatchWallet()`
+
 ### Example
 
 #### Creating a wallet

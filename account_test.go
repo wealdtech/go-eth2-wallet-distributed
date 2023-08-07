@@ -20,10 +20,12 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	e2types "github.com/wealdtech/go-eth2-types/v2"
 	distributed "github.com/wealdtech/go-eth2-wallet-distributed"
 	keystorev4 "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 	filesystem "github.com/wealdtech/go-eth2-wallet-store-filesystem"
@@ -161,7 +163,7 @@ func TestImportAccount(t *testing.T) {
 	store := scratch.New()
 	encryptor := keystorev4.New()
 	wallet, err := distributed.CreateWallet(context.Background(), "test wallet", store, encryptor)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// Try to import without unlocking the wallet; should fail
 	_, err = wallet.(e2wtypes.WalletDistributedAccountImporter).ImportDistributedAccount(context.Background(), "Locked", _byteArray("220091d10843519cd1c452a4ec721d378d7d4c5ece81c4b5556092d410e5e0e1"), 2, [][]byte{
@@ -173,7 +175,7 @@ func TestImportAccount(t *testing.T) {
 	require.EqualError(t, err, "wallet must be unlocked to create accounts")
 
 	err = wallet.(e2wtypes.WalletLocker).Unlock(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		if err := wallet.(e2wtypes.WalletLocker).Lock(context.Background()); err != nil {
 			panic(err)
@@ -198,7 +200,7 @@ func TestImportAccount(t *testing.T) {
 				locker, isLocker := account.(e2wtypes.AccountLocker)
 				require.True(t, isLocker)
 				err = locker.Unlock(context.Background(), test.passphrase)
-				require.Nil(t, err)
+				require.NoError(t, err)
 				_, err := account.(e2wtypes.AccountPrivateKeyProvider).PrivateKey(context.Background())
 				assert.Nil(t, err)
 			}
@@ -224,10 +226,10 @@ func TestRebuildIndex(t *testing.T) {
 
 	encryptor := keystorev4.New()
 	wallet, err := distributed.CreateWallet(context.Background(), "test wallet", store, encryptor)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = wallet.(e2wtypes.WalletLocker).Unlock(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		if err := wallet.(e2wtypes.WalletLocker).Lock(context.Background()); err != nil {
 			panic(err)
@@ -277,4 +279,117 @@ func TestRebuildIndex(t *testing.T) {
 	index, err = os.Open(indexPath)
 	require.NoError(t, err)
 	require.NoError(t, index.Close())
+}
+
+func TestAccountLocking(t *testing.T) {
+	accountName := "test"
+	key := _byteArray("220091d10843519cd1c452a4ec721d378d7d4c5ece81c4b5556092d410e5e0e1")
+	signingThreshold := uint32(2)
+	verificationVector := [][]byte{
+		_byteArray("b5f7f572e3f50a970af6c13f02e2c20900cda0dffdcf8b2e2a06c78ba2bae667bfa7aab01b36fba268da4aa2aba5c68f"),
+		_byteArray("a88427e16f45b632f83247220bd885241cff6fd035803e976fe96c6352933d01a6205d6f3e87a96789cddcca64bbcf25"),
+	}
+	participants := map[uint64]string{1: "foo", 2: "bar", 3: "baz"}
+
+	// #nosec G404
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("TestRebuildIndex-%d", rand.Int31()))
+	defer os.RemoveAll(path)
+	store := filesystem.New(filesystem.WithLocation(path))
+
+	encryptor := keystorev4.New()
+	wallet, err := distributed.CreateWallet(context.Background(), "test wallet", store, encryptor)
+	require.NoError(t, err)
+
+	require.NoError(t, wallet.(e2wtypes.WalletLocker).Unlock(context.Background(), nil))
+
+	account, err := wallet.(e2wtypes.WalletDistributedAccountImporter).ImportDistributedAccount(context.Background(), accountName, key, signingThreshold, verificationVector, participants, []byte("account passphrase"))
+	require.NoError(t, err)
+
+	locker, isLocker := account.(e2wtypes.AccountLocker)
+	require.True(t, isLocker)
+
+	// Ensure the wallet is not unlocked to begin with.
+	unlocked, err := locker.IsUnlocked(context.Background())
+	require.NoError(t, err)
+	require.False(t, unlocked)
+
+	// Ensure the wallet is not unlocked when an incorrect passphrase is supplied.
+	require.EqualError(t, locker.Unlock(context.Background(), []byte("bad passphrase")), "incorrect passphrase")
+	unlocked, err = locker.IsUnlocked(context.Background())
+	require.NoError(t, err)
+	require.False(t, unlocked)
+
+	// Ensure the wallet is unlocked when the correct passphrase is supplied.
+	require.NoError(t, locker.Unlock(context.Background(), []byte("account passphrase")))
+	unlocked, err = locker.IsUnlocked(context.Background())
+	require.NoError(t, err)
+	require.True(t, unlocked)
+
+	// ensure the wallet remains unlocked when already unlocked.
+	require.NoError(t, locker.Unlock(context.Background(), []byte("account passphrase")))
+	unlocked, err = locker.IsUnlocked(context.Background())
+	require.NoError(t, err)
+	require.True(t, unlocked)
+}
+
+func TestConcurrentImport(t *testing.T) {
+	store := scratch.New()
+	encryptor := keystorev4.New()
+	wallet, err := distributed.CreateWallet(context.Background(), "test wallet", store, encryptor)
+	require.NoError(t, err)
+	locker, isLocker := wallet.(e2wtypes.WalletLocker)
+	require.True(t, isLocker)
+	require.NoError(t, locker.Unlock(context.Background(), nil))
+
+	// Create a number of runners that will try to create accounts simultaneously.
+	var runWG sync.WaitGroup
+	var setupWG sync.WaitGroup
+	starter := make(chan any)
+	numAccounts := 64
+	for i := 0; i < numAccounts; i++ {
+		setupWG.Add(1)
+		runWG.Add(1)
+		go func() {
+			id := rand.Uint32()
+			name := fmt.Sprintf("Test account %d", id)
+			privateKey, err := e2types.GenerateBLSPrivateKey()
+			require.NoError(t, err)
+			key := privateKey.Marshal()
+			verificationVector := [][]byte{
+				privateKey.PublicKey().Marshal(),
+				_byteArray("b5f7f572e3f50a970af6c13f02e2c20900cda0dffdcf8b2e2a06c78ba2bae667bfa7aab01b36fba268da4aa2aba5c68f"),
+			}
+			participants := map[uint64]string{
+				1: "host1:12345",
+				2: "host2:12345",
+				3: "host3:12345",
+			}
+			setupWG.Done()
+
+			<-starter
+
+			account, err := wallet.(e2wtypes.WalletDistributedAccountImporter).ImportDistributedAccount(context.Background(), name, key, 2, verificationVector, participants, []byte("test"))
+			require.NoError(t, err)
+			require.NotNil(t, account)
+			runWG.Done()
+		}()
+	}
+
+	// Wait for setup to complete.
+	setupWG.Wait()
+
+	// Start the jobs by closing the channel.
+	close(starter)
+
+	// Wait for run to complete
+	runWG.Wait()
+
+	// Confirm that all accounts have been created.
+	wallet, err = distributed.OpenWallet(context.Background(), "test wallet", store, encryptor)
+	require.NoError(t, err)
+	accounts := 0
+	for range wallet.Accounts(context.Background()) {
+		accounts++
+	}
+	require.Equal(t, numAccounts, accounts)
 }
