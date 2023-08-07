@@ -140,7 +140,7 @@ func (w *wallet) retrieveAccountsBatch(ctx context.Context) error {
 	}
 	res := &batch{}
 	if err := json.Unmarshal(serializedBatch, res); err != nil {
-		return err
+		return errors.Wrap(err, "failed to unmarshal batch")
 	}
 	w.batch = res
 
@@ -188,7 +188,7 @@ func (w *wallet) batchDecrypt(_ context.Context, passphrase []byte) error {
 	w.batchMutex.Lock()
 	defer w.batchMutex.Unlock()
 
-	if w.batchDecrypted == true {
+	if w.batchDecrypted {
 		// Means the batch was decrypted by another thread; all good.
 		return nil
 	}

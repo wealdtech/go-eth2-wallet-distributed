@@ -40,7 +40,7 @@ func (b *batchEntry) MarshalJSON() ([]byte, error) {
 		verificationVector[i] = fmt.Sprintf("%x", b.verificationVector[i])
 	}
 
-	return json.Marshal(&batchEntryJSON{
+	res, err := json.Marshal(&batchEntryJSON{
 		UUID:               b.id,
 		Name:               b.name,
 		VerificationVector: verificationVector,
@@ -48,6 +48,11 @@ func (b *batchEntry) MarshalJSON() ([]byte, error) {
 		Participants:       b.participants,
 		Pubkey:             fmt.Sprintf("%x", b.pubkey),
 	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal JSON")
+	}
+
+	return res, nil
 }
 
 func (b *batchEntry) UnmarshalJSON(input []byte) error {
@@ -87,14 +92,17 @@ type batchJSON struct {
 }
 
 func (b *batch) MarshalJSON() ([]byte, error) {
-	data := &batchJSON{
+	res, err := json.Marshal(&batchJSON{
 		Entries:   b.entries,
 		Crypto:    b.crypto,
 		Encryptor: b.encryptor.String(),
 		Version:   version,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal JSON")
 	}
 
-	return json.Marshal(data)
+	return res, nil
 }
 
 func (b *batch) UnmarshalJSON(input []byte) error {
