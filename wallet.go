@@ -389,9 +389,12 @@ func (w *wallet) Export(ctx context.Context, passphrase []byte) ([]byte, error) 
 	}
 
 	accounts := make([]*account, 0)
-	for acc := range w.Accounts(ctx) {
-		//nolint:forcetypeassert
-		accounts = append(accounts, acc.(*account))
+	for data := range w.store.RetrieveAccounts(w.ID()) {
+		account, err := deserializeAccount(w, data)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to deserialize account")
+		}
+		accounts = append(accounts, account)
 	}
 
 	ext := &walletExt{
